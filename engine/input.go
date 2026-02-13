@@ -12,9 +12,10 @@ func (g *Game) HandleInput(ev tcell.Event) bool {
 		if ev.Key() == tcell.KeyEscape {
 			if g.State == "Menu" {
 				g.State = "Exploring"
-				return false // Signal to exit the menu
+				g.IsPickingSlot = false // Reset slot picking if exiting menu
+				return false
 			}
-			return true // Signal to quit the game
+			return true
 		}
 
 		if g.State == "Exploring" {
@@ -26,16 +27,47 @@ func (g *Game) HandleInput(ev tcell.Event) bool {
 	return false
 }
 
+// Move handles the actual coordinate update with collision detection
+func (g *Game) MovePlayer(dx, dy int) {
+	newX := g.Player.X + dx
+	newY := g.Player.Y + dy
+
+	if newX >= 0 && newX < g.Map.Width && newY >= 0 && newY < g.Map.Height {
+		tile := g.Map.Tiles[newX][newY]
+
+		if tile.Type == "Floor" {
+			g.Player.X = newX
+			g.Player.Y = newY
+		} else if tile.Type == "Portal" {
+			// Move to the next floor
+			g.NextFloor()
+		}
+	}
+}
+
+// Add this to engine/game.go or input.go
+func (g *Game) NextFloor() {
+	g.Floor++
+	// Re-generate map
+	g.Map = NewMap(80, 45)
+	g.Map.GenerateLevel(g)
+
+	// Reset player position to the new room 0
+	if len(g.Map.Rooms) > 0 {
+		g.Player.X, g.Player.Y = g.Map.Rooms[0].Center()
+	}
+}
+
 func (g *Game) handleExplorationInput(ev *tcell.EventKey) bool {
 	switch ev.Key() {
 	case tcell.KeyUp:
-		g.Player.Move(0, -1)
+		g.MovePlayer(0, -1)
 	case tcell.KeyDown:
-		g.Player.Move(0, 1)
+		g.MovePlayer(0, 1)
 	case tcell.KeyLeft:
-		g.Player.Move(-1, 0)
+		g.MovePlayer(-1, 0)
 	case tcell.KeyRight:
-		g.Player.Move(1, 0)
+		g.MovePlayer(1, 0)
 	}
 
 	if ev.Rune() == 'm' || ev.Rune() == 'M' {
@@ -45,7 +77,7 @@ func (g *Game) handleExplorationInput(ev *tcell.EventKey) bool {
 }
 
 func (g *Game) handleMenuInput(ev *tcell.EventKey) bool {
-	// Standard Tab Switching
+	// Standard Tab Switching (Disabled while picking a slot for a cleaner UI experience)
 	if !g.IsPickingSlot {
 		switch ev.Rune() {
 		case '1':
@@ -60,9 +92,9 @@ func (g *Game) handleMenuInput(ev *tcell.EventKey) bool {
 		}
 	}
 
+	// Skill Tab Logic
 	if g.ActiveTab == 2 {
 		if !g.IsPickingSlot {
-			// Select the Skill
 			switch ev.Key() {
 			case tcell.KeyUp:
 				if g.SelectedSkillIndex > 0 {
@@ -73,10 +105,11 @@ func (g *Game) handleMenuInput(ev *tcell.EventKey) bool {
 					g.SelectedSkillIndex++
 				}
 			case tcell.KeyEnter:
-				g.IsPickingSlot = true // Move to slot selection
+				if len(g.Player.LearnedSkills) > 0 {
+					g.IsPickingSlot = true
+				}
 			}
 		} else {
-			// Select the Slot
 			switch ev.Key() {
 			case tcell.KeyUp:
 				if g.SelectedSlotIndex > 0 {
@@ -87,10 +120,10 @@ func (g *Game) handleMenuInput(ev *tcell.EventKey) bool {
 					g.SelectedSlotIndex++
 				}
 			case tcell.KeyEscape:
-				g.IsPickingSlot = false // Cancel
+				g.IsPickingSlot = false
 			case tcell.KeyEnter:
 				g.Player.EquipSkill(g.SelectedSkillIndex, g.SelectedSlotIndex)
-				g.IsPickingSlot = false // Done
+				g.IsPickingSlot = false
 			}
 		}
 	}

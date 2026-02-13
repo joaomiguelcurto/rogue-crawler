@@ -14,38 +14,47 @@ type Game struct {
 	Enemies            []entities.Enemy
 	State              string // "Exploring", "Menu"
 	ActiveTab          int    // 0: Stats, 1: Inventory, 2: Skills
-	SelectedSkillIndex int    // Track which skill is selected
-	SelectedSlotIndex  int
-	IsPickingSlot      bool // State toggle
+	SelectedSkillIndex int    // Track which learned skill is highlighted
+	SelectedSlotIndex  int    // Track which active slot is highlighted
+	IsPickingSlot      bool   // True if we are choosing a slot for a skill
+	Map                *GameMap
+	Floor              int // Current dungeon level
 }
 
-// Helper function to render text to the tcell screen
+// DrawText is a helper to render strings to the screen
 func DrawText(s tcell.Screen, x, y int, str string, style tcell.Style) {
 	for i, r := range str {
 		s.SetContent(x+i, y, r, nil, style)
 	}
 }
 
-// Exploration Mode
+// renderExploration draws the dungeon map, player, and enemies
 func (g *Game) renderExploration() {
-	// Render Player
-	g.Screen.SetContent(g.Player.X, g.Player.Y, g.Player.Visual, nil, tcell.StyleDefault.Foreground(g.Player.Color))
-	DrawText(g.Screen, 1, 1, "MODE: Exploring - Press 'M' for Menu", tcell.StyleDefault)
-
-	// Render enemies
-	for i, enemy := range g.Enemies {
-		row := 4 + (i * 2) // to space them out
-
-		// Draw the visual with the specific color
-		style := tcell.StyleDefault.Foreground(enemy.Color)
-		g.Screen.SetContent(2, row, enemy.Visual, nil, style)
+	// Draw the Map Tiles
+	for x := 0; x < g.Map.Width; x++ {
+		for y := 0; y < g.Map.Height; y++ {
+			tile := g.Map.Tiles[x][y]
+			g.Screen.SetContent(x, y, tile.Visual, nil, tcell.StyleDefault.Foreground(tile.Color))
+		}
 	}
+
+	// Draw Enemies
+	for _, e := range g.Enemies {
+		style := tcell.StyleDefault.Foreground(e.Color)
+		g.Screen.SetContent(e.X, e.Y, e.Visual, nil, style)
+	}
+
+	// Draw Player (on top of everything)
+	g.Screen.SetContent(g.Player.X, g.Player.Y, g.Player.Visual, nil, tcell.StyleDefault.Foreground(g.Player.Color))
+
+	// UI Overlay
+	DrawText(g.Screen, 1, 0, " MODE: Exploring - Press 'M' for Menu ", tcell.StyleDefault.Reverse(true))
 }
 
-// Render Menu
+// renderMenu draws the tabbed interface
 func (g *Game) renderMenu() {
-	// Draw Menu Border/Background
-	DrawText(g.Screen, 2, 2, "[ 1: Stats ]  [ 2: Inventory ]  [ 3: Skills ] (Press ESC to Close)", tcell.StyleDefault.Reverse(true))
+	// Top Navigation Bar
+	DrawText(g.Screen, 2, 2, " [ 1: Stats ]  [ 2: Inventory ]  [ 3: Skills ] (ESC to Close) ", tcell.StyleDefault.Reverse(true))
 
 	switch g.ActiveTab {
 	case 0:
@@ -57,6 +66,7 @@ func (g *Game) renderMenu() {
 	}
 }
 
+// drawStats renders the detailed player information
 func (g *Game) drawStats() {
 	p := g.Player
 	DrawText(g.Screen, 2, 5, fmt.Sprintf("Class: %s", p.Class), tcell.StyleDefault)
@@ -69,32 +79,27 @@ func (g *Game) drawStats() {
 	DrawText(g.Screen, 2, 14, fmt.Sprintf("Luck:         %d", p.Luck), tcell.StyleDefault)
 }
 
+// drawSkills renders the skill management screen
 func (g *Game) drawSkills() {
 	// Draw Active Slots
 	DrawText(g.Screen, 2, 4, "--- ACTIVE SLOTS ---", tcell.StyleDefault.Foreground(tcell.ColorYellow))
 
 	for i := 0; i < g.Player.MaxActiveSlots; i++ {
 		row := 5 + i
-
-		// DEFAULT STYLE
 		style := tcell.StyleDefault.Foreground(tcell.ColorWhite)
 		prefix := fmt.Sprintf("[%d] ", i+1)
 
-		// TARGETING STYLE (When picking a slot)
+		// High contrast style when picking a slot
 		if g.IsPickingSlot && i == g.SelectedSlotIndex {
-			// Explicitly set colors here to avoid the bug where the text is invisible
-			style = tcell.StyleDefault.
-				Foreground(tcell.ColorBlack).
-				Background(tcell.ColorYellow).
-				Bold(true)
+			style = tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorYellow).Bold(true)
 			prefix = " TARGET -> "
 		}
 
+		// Check if slot has a skill
 		if i < len(g.Player.ActiveSkills) && g.Player.ActiveSkills[i].Name != "Empty" {
 			s := g.Player.ActiveSkills[i]
 			DrawText(g.Screen, 2, row, prefix+s.Name, style)
 		} else {
-			// Make empty slots gray unless they are being targeted
 			if !(g.IsPickingSlot && i == g.SelectedSlotIndex) {
 				style = style.Foreground(tcell.ColorGray)
 			}
@@ -102,23 +107,28 @@ func (g *Game) drawSkills() {
 		}
 	}
 
-	// Draw Learned Skills (Dimmed if picking a slot)
+	// Draw Learned Skills
 	listStyle := tcell.StyleDefault.Foreground(tcell.ColorLightCyan)
 	if g.IsPickingSlot {
-		listStyle = listStyle.Foreground(tcell.ColorGray)
+		listStyle = listStyle.Foreground(tcell.ColorGray) // Dim list while picking slot (was causing a problem where player couldnt see what he was selecting)
 	}
-	DrawText(g.Screen, 2, 11, "--- LEARNED SKILLS ---", listStyle)
+	DrawText(g.Screen, 2, 11, "--- LEARNED SKILLS (Enter to Equip) ---", listStyle)
 
 	for i, s := range g.Player.LearnedSkills {
 		row := 12 + i
 		style := tcell.StyleDefault
+		prefix := "  "
+
+		// Highlight selection in the learned list
 		if !g.IsPickingSlot && i == g.SelectedSkillIndex {
-			style = tcell.StyleDefault.Reverse(true)
+			style = tcell.StyleDefault.Foreground(tcell.ColorBlack).Background(tcell.ColorLightCyan)
+			prefix = "> "
 		}
-		DrawText(g.Screen, 2, row, "- "+s.Name, style)
+		DrawText(g.Screen, 2, row, prefix+s.Name, style)
 	}
 }
 
+// Run initializes the game and manages the main loop
 func Run() {
 	screen, err := tcell.NewScreen()
 	if err != nil {
@@ -129,22 +139,33 @@ func Run() {
 	}
 	defer screen.Fini()
 
-	// Initialize game structure
+	// Initialize Player first so we have stats/class ready
+	player := entities.NewPlayer("rogue")
+
+	// Initialize Game Instance (without the map yet)
 	g := &Game{
-		Screen: screen,
-		Player: entities.NewPlayer("rogue"),
-		Enemies: []entities.Enemy{
-			entities.NewEnemy("goblin"),
-			entities.NewEnemy("spider"),
-		},
+		Screen:    screen,
+		Player:    player,
+		Enemies:   []entities.Enemy{},
 		State:     "Exploring",
 		ActiveTab: 0,
+		Floor:     1, // Start on the first floor
 	}
 
+	// Generate Map (Now passing 'g' so it can add enemies to g.Enemies)
+	m := NewMap(80, 45)
+	m.GenerateLevel(g)
+	g.Map = m
+
+	// Position Player at center of first room
+	if len(m.Rooms) > 0 {
+		g.Player.X, g.Player.Y = m.Rooms[0].Center()
+	}
+
+	// Main Game Loop
 	for {
 		screen.Clear()
 
-		// Renders depending on the state
 		switch g.State {
 		case "Exploring":
 			g.renderExploration()
@@ -154,11 +175,10 @@ func Run() {
 
 		screen.Show()
 
-		// Handle all the events
+		// Handle Events
 		ev := screen.PollEvent()
 		if g.HandleInput(ev) {
 			break
 		}
-
 	}
 }

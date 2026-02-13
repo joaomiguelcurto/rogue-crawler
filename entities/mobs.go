@@ -5,6 +5,7 @@ import (
 )
 
 type Enemy struct {
+	X, Y   int
 	Name   string
 	Visual rune
 	Color  tcell.Color
